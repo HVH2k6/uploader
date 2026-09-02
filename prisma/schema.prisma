@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------
+// 1. User (Đồng bộ với Clerk qua Webhook)
+// ----------------------------------------------------
+model User {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clerkId   String   @unique             // ID sinh ra từ Clerk
+  email     String   @unique
+  username  String?
+  roleId    String?  @db.Uuid
+  role      Role?    @relation(fields: [roleId], references: [id])
+  
+  configs   ConfigUpload[]
+  histories HistoryUpload[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  description String?
+  users       User[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ----------------------------------------------------
+// 2. Cấu hình Upload (Lotus/TikTok)
+// ----------------------------------------------------
+model ConfigUpload {
+  id          Int      @id @default(autoincrement())
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  provider    String   // 'LOTUS' hoặc 'TIKTOK'
+  accountName String   // Tên gợi nhớ
+  
+  // Dành cho Lotus
+  botToken    String?
+  chatId      String?
+  
+  // Dành cho TikTok
+  cookie      String?
+  csrfToken   String?
+  referer     String   @default("https://ads.tiktok.com/")
+  
+  isActive    Boolean  @default(true)
+  
+  histories   HistoryUpload[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([provider, isActive])
+}
+
+// ----------------------------------------------------
+// 3. Lịch sử Upload & Convert
+// ----------------------------------------------------
+model HistoryUpload {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  
+  userId           String        @db.Uuid
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  configId         Int?
+  config           ConfigUpload? @relation(fields: [configId], references: [id], onDelete: SetNull)
+  
+  originalFileName String
+  fileSizeBytes    BigInt?
+  durationSeconds  Float?
+  
+  providerUsed     String        // 'LOTUS' hoặc 'TIKTOK'
+  status           String        @default("PROCESSING") // PROCESSING, COMPLETED, FAILED
+  
+  m3u8Url          String?
+  thumbnailUrl     String?
+  errorMessage     String?
+  
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}

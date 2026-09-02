@@ -1,0 +1,17 @@
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXTINF:6.000000,
+https://p16-lp-sg.ibyteimg.com/origin/tos-alisg-i-375lmtcpo0-sg/267a2ffb8f454eb0bcfc9a76737ecb04
+#EXTINF:4.000000,
+https://p16-lp-sg.ibyteimg.com/origin/tos-alisg-i-375lmtcpo0-sg/96216f8546354a208ebf086175f17a90
+#EXTINF:6.000000,
+https://p16-lp-sg.ibyteimg.com/origin/tos-alisg-i-375lmtcpo0-sg/b80bd10e619a48d39c762fad2ede5e44
+#EXTINF:4.000000,
+https://p16-lp-sg.ibyteimg.com/origin/tos-alisg-i-375lmtcpo0-sg/b21812cc67db422abf0cf0421026643c
+#EXTINF:3.566667,
+https://p16-lp-sg.ibyteimg.com/origin/tos-alisg-i-375lmtcpo0-sg/b24ab18fd09d45dfa5a76a264c96b165
+#EXT-X-ENDLIST

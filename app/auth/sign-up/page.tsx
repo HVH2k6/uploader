@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -12,32 +12,33 @@ import { Field, FieldLabel, FieldError } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/contexts/AuthContext'
 
-const loginSchema = z.object({
+const registerSchema = z.object({
   email: z.string().email('Email không hợp lệ'),
-  password: z.string().min(1, 'Vui lòng nhập mật khẩu'),
+  username: z.string().min(2, 'Tên hiển thị phải có ít nhất 2 ký tự'),
+  password: z.string().min(6, 'Mật khẩu phải ít nhất 6 ký tự'),
 })
 
-export default function SignInPage() {
+export default function SignUpPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { setUser } = useAuth()
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const form = useForm<z.infer<typeof loginSchema>>({
-    resolver: zodResolver(loginSchema),
+  const form = useForm<z.infer<typeof registerSchema>>({
+    resolver: zodResolver(registerSchema),
     defaultValues: {
       email: '',
+      username: '',
       password: '',
     },
   })
 
-  async function onSubmit(values: z.infer<typeof loginSchema>) {
+  async function onSubmit(values: z.infer<typeof registerSchema>) {
     setIsLoading(true)
     setError('')
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
@@ -46,10 +47,9 @@ export default function SignInPage() {
 
       if (res.ok) {
         setUser(data.user)
-        const redirectUrl = searchParams.get('redirect_url') || '/dashboard'
-        router.push(redirectUrl)
+        router.push('/dashboard')
       } else {
-        setError(data.error || 'Đăng nhập thất bại')
+        setError(data.error || 'Đăng ký thất bại')
       }
     } catch (err) {
       setError('Đã có lỗi xảy ra, vui lòng thử lại')
@@ -60,18 +60,12 @@ export default function SignInPage() {
 
   return (
     <div className="w-full max-w-md bg-card border border-border p-8 rounded-xl shadow-lg">
-      <h1 className="text-2xl font-bold mb-2">Đăng nhập</h1>
-      <p className="text-muted-foreground mb-6">Nhập email và mật khẩu của bạn để tiếp tục</p>
+      <h1 className="text-2xl font-bold mb-2">Đăng ký</h1>
+      <p className="text-muted-foreground mb-6">Tạo tài khoản mới để bắt đầu sử dụng</p>
 
       {error && (
         <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md mb-6">
           {error}
-        </div>
-      )}
-
-      {searchParams.get('error') === 'session_expired' && (
-        <div className="bg-orange-500/15 text-orange-500 text-sm p-3 rounded-md mb-6">
-          Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.
         </div>
       )}
 
@@ -87,6 +81,22 @@ export default function SignInPage() {
                 id={field.name}
                 aria-invalid={fieldState.invalid}
                 placeholder="name@example.com"
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error as any]} />}
+            </Field>
+          )}
+        />
+        <Controller
+          name="username"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid}>
+              <FieldLabel htmlFor={field.name}>Tên hiển thị</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                aria-invalid={fieldState.invalid}
+                placeholder="Tên của bạn"
               />
               {fieldState.invalid && <FieldError errors={[fieldState.error as any]} />}
             </Field>
@@ -110,14 +120,14 @@ export default function SignInPage() {
           )}
         />
         <Button type="submit" className="w-full mt-4" disabled={isLoading}>
-          {isLoading ? 'Đang xử lý...' : 'Đăng nhập'}
+          {isLoading ? 'Đang xử lý...' : 'Đăng ký'}
         </Button>
       </form>
 
       <div className="mt-6 text-center text-sm">
-        Chưa có tài khoản?{' '}
-        <Link href="/auth/sign-up" className="text-primary hover:underline">
-          Đăng ký ngay
+        Đã có tài khoản?{' '}
+        <Link href="/auth/sign-in" className="text-primary hover:underline">
+          Đăng nhập
         </Link>
       </div>
     </div>

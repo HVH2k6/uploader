@@ -2,15 +2,63 @@ import ffmpeg from 'fluent-ffmpeg'
 import fs from 'fs'
 import path from 'path'
 
-// Thiết lập đường dẫn FFmpeg & FFprobe
-const FFMPEG_BIN = process.env.FFMPEG_PATH || 'D:\\ffmpeg\\bin\\ffmpeg.exe'
-const FFPROBE_BIN = process.env.FFPROBE_PATH || 'D:\\ffmpeg\\bin\\ffprobe.exe'
+// Hàm tìm kiếm và cấu hình đường dẫn FFmpeg & FFprobe tự động trên Windows và VPS Linux
+function resolveBinary(type: 'ffmpeg' | 'ffprobe'): string | undefined {
+  // 1. Ưu tiên biến môi trường cấu hình trong .env (FFMPEG_PATH, FFPROBE_PATH)
+  const envPath = type === 'ffmpeg' ? process.env.FFMPEG_PATH : process.env.FFPROBE_PATH
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath
+  }
 
-if (fs.existsSync(FFMPEG_BIN)) {
-  ffmpeg.setFfmpegPath(FFMPEG_BIN)
+  // 2. Tìm theo các đường dẫn mặc định phổ biến của từng hệ điều hành
+  const isWindows = process.platform === 'win32'
+  const candidatePaths = isWindows
+    ? [
+        `D:\\ffmpeg\\bin\\${type}.exe`,
+        `C:\\ffmpeg\\bin\\${type}.exe`,
+        `C:\\Program Files\\ffmpeg\\bin\\${type}.exe`,
+        `C:\\ProgramData\\chocolatey\\bin\\${type}.exe`,
+      ]
+    : [
+        `/usr/bin/${type}`,
+        `/usr/local/bin/${type}`,
+        `/bin/${type}`,
+        `/snap/bin/${type}`,
+      ]
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  // 3. Fallback tự động sang package npm pre-built (@ffmpeg-installer/ffmpeg, @ffprobe-installer/ffprobe)
+  try {
+    if (type === 'ffmpeg') {
+      const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg')
+      if (ffmpegInstaller?.path && fs.existsSync(ffmpegInstaller.path)) {
+        return ffmpegInstaller.path
+      }
+    } else {
+      const ffprobeInstaller = require('@ffprobe-installer/ffprobe')
+      if (ffprobeInstaller?.path && fs.existsSync(ffprobeInstaller.path)) {
+        return ffprobeInstaller.path
+      }
+    }
+  } catch (e) {}
+
+  // 4. Mặc định gọi lệnh toàn cục từ PATH hệ thống
+  return type
 }
-if (fs.existsSync(FFPROBE_BIN)) {
-  ffmpeg.setFfprobePath(FFPROBE_BIN)
+
+const ffmpegPath = resolveBinary('ffmpeg')
+const ffprobePath = resolveBinary('ffprobe')
+
+if (ffmpegPath) {
+  ffmpeg.setFfmpegPath(ffmpegPath)
+}
+if (ffprobePath) {
+  ffmpeg.setFfprobePath(ffprobePath)
 }
 
 export interface VideoProbeInfo {
@@ -48,14 +96,12 @@ export function probeVideo(filePath: string): Promise<VideoProbeInfo> {
 
       const videoCodec = (videoStream?.codec_name || 'unknown').toLowerCase()
       const audioCodec = (audioStream?.codec_name || 'unknown').toLowerCase()
-      const pixFmt = (videoStream?.pix_fmt || 'unknown').toLowerCase()
+      const pixFmt = (videoStream?.pix_fmt || '').toLowerCase()
 
-      const isH264 = ['h264', 'avc1'].includes(videoCodec)
-      const isAacMp3 = ['aac', 'mp3'].includes(audioCodec)
-      const is8Bit = pixFmt === 'unknown' || !pixFmt.includes('10')
-
-      // Cần transcode nếu không phải H.264 8-bit và Audio AAC/MP3
-      const needTranscode = !isH264 || !isAacMp3 || !is8Bit
+      // Chỉ cần re-encode khi codec không phải H.264 (HEVC, VP9, AV1...) hoặc video 10-bit
+      const isH264 = videoCodec === 'h264' || videoCodec === 'avc1'
+      const is10Bit = pixFmt.includes('10le') || pixFmt.includes('10be')
+      const needTranscode = !isH264 || is10Bit
 
       resolve({
         duration,
@@ -94,20 +140,22 @@ export function sliceVideoHLS(options: SliceOptions): Promise<{ duration: number
       const command = ffmpeg(inputPath)
 
       if (needTranscode) {
-        // Safe Web Re-encode: Chuẩn hóa H.264 8-bit YUV420p + AAC Stereo 128k + Keyframe 5s
+        // Safe Web Re-encode: Tận dụng toàn bộ CPU core (-threads 0) và preset ultrafast
         command
           .outputOptions([
+            '-threads 0',
             '-map 0:v:0',
             '-map 0:a:0?',
             '-sn',
             '-dn',
             '-c:v libx264',
-            '-preset veryfast',
+            '-preset ultrafast',
+            '-tune zerolatency',
             '-profile:v high',
             '-level 4.1',
             '-pix_fmt yuv420p',
-            '-g 125',
-            '-keyint_min 25',
+            '-g 120',
+            '-keyint_min 24',
             '-sc_threshold 0',
             `-force_key_frames expr:gte(t,n_forced*${segmentDuration})`,
             '-c:a aac',
@@ -122,9 +170,10 @@ export function sliceVideoHLS(options: SliceOptions): Promise<{ duration: number
             `-hls_segment_filename ${segmentPattern}`,
           ])
       } else {
-        // Fast Remux: Giữ nguyên Stream H.264/AAC nhưng bảo toàn PTS liên tục
+        // Fast Remux: Cực nhanh (1-2s), bảo toàn video gốc và tối ưu tốc độ VPS
         command
           .outputOptions([
+            '-threads 0',
             '-map 0:v:0',
             '-map 0:a:0?',
             '-sn',
@@ -140,50 +189,45 @@ export function sliceVideoHLS(options: SliceOptions): Promise<{ duration: number
           ])
       }
 
-      command
-        .on('progress', (progress) => {
-          try {
-            const currentSeconds = progress.timemark
-              ? parseTimemarkToSeconds(progress.timemark)
-              : (progress.percent || 0) * (probe.duration / 100)
-            const percent = probe.duration > 0 ? Math.min(99, Math.round((currentSeconds / probe.duration) * 100)) : 0
-            
-            const progData = `out_time=${progress.timemark || '00:00:00'}\nout_time_us=${Math.round(currentSeconds * 1000000)}\nspeed=${progress.currentFps ? `${progress.currentFps}fps` : '1.0x'}\nprogress=continue\npercent=${percent}\n`
-            fs.writeFileSync(progressFile, progData, 'utf-8')
-          } catch (e) {
-            // Ignore file write race condition
+      // Ghi log tiến trình vào file txt để frontend polling
+      command.on('progress', (progress) => {
+        try {
+          const logData = {
+            percent: progress.percent ? Math.round(progress.percent) : 0,
+            timemark: progress.timemark,
+            currentFps: progress.currentFps,
+            currentKbps: progress.currentKbps,
+            targetSize: progress.targetSize,
+            updatedAt: Date.now(),
           }
-        })
-        .on('end', () => {
-          try {
-            fs.writeFileSync(progressFile, 'progress=end\npercent=100\n', 'utf-8')
-          } catch (e) {}
+          fs.writeFileSync(progressFile, JSON.stringify(logData), 'utf-8')
+        } catch (e) {}
+      })
 
-          const files = fs.readdirSync(outputDir).filter((f) => f.endsWith('.ts'))
+      command.on('end', () => {
+        try {
+          // Đếm số lượng files .ts đã tạo
+          const files = fs.readdirSync(outputDir)
+          const tsFiles = files.filter((f) => f.endsWith('.ts'))
           resolve({
             duration: probe.duration,
-            segmentsCount: files.length,
+            segmentsCount: tsFiles.length,
           })
-        })
-        .on('error', (err) => {
-          reject(new Error(`Lỗi FFmpeg chuyển mã: ${err.message}`))
-        })
-        .save(m3u8Path)
-    } catch (err: any) {
-      reject(err)
+        } catch (e) {
+          resolve({ duration: probe.duration, segmentsCount: 0 })
+        }
+      })
+
+      command.on('error', (err) => {
+        console.error('FFmpeg slice error:', err)
+        reject(new Error(`FFmpeg lỗi: ${err.message}`))
+      })
+
+      // Ghi ra file m3u8 master
+      command.output(m3u8Path)
+      command.run()
+    } catch (error) {
+      reject(error)
     }
   })
 }
-
-function parseTimemarkToSeconds(timemark: string): number {
-  const parts = timemark.split(':')
-  if (parts.length === 3) {
-    const hours = parseFloat(parts[0]) || 0
-    const mins = parseFloat(parts[1]) || 0
-    const secs = parseFloat(parts[2]) || 0
-    return hours * 3600 + mins * 60 + secs
-  }
-  return 0
-}
-
-export default ffmpeg

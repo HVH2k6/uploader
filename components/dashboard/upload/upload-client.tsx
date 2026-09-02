@@ -39,7 +39,47 @@ import { Label } from '@/components/ui/label'
 
 const MAX_QUEUE_ITEMS = 10
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024 // 5 GB
-const CHUNK_SIZE = 10 * 1024 * 1024 // 10 MB per chunk upload to server
+const CHUNK_SIZE = 4 * 1024 * 1024 // 4 MB per chunk upload to server (tối ưu hóa cho mọi Web Server / Nginx / VPS)
+
+function uploadChunkAjax(
+  url: string,
+  headers: Record<string, string>,
+  body: Blob,
+  onProgress: (loaded: number) => void
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url)
+    for (const [k, v] of Object.entries(headers)) {
+      xhr.setRequestHeader(k, v)
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(event.loaded)
+      }
+    }
+
+    xhr.onload = () => {
+      try {
+        const json = JSON.parse(xhr.responseText)
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ ok: true, data: json })
+        } else {
+          resolve({ ok: false, error: json.error || `Lỗi máy chủ (HTTP ${xhr.status})` })
+        }
+      } catch (e) {
+        resolve({ ok: false, error: `Phản hồi không hợp lệ từ server (HTTP ${xhr.status})` })
+      }
+    }
+
+    xhr.onerror = () => {
+      resolve({ ok: false, error: 'Mất kết nối mạng tới VPS hoặc Nginx chặn dung lượng' })
+    }
+
+    xhr.send(body)
+  })
+}
 
 export interface QueueItem {
   id: string
@@ -303,26 +343,38 @@ export function UploadClient({ initialHistories = [] }: UploadClientProps) {
           const end = Math.min(start + CHUNK_SIZE, file.size)
           const chunkBlob = file.slice(start, end)
 
-          const chunkRes = await fetch('/api/upload/chunk', {
-            method: 'POST',
-            headers: {
+          const chunkRes = await uploadChunkAjax(
+            '/api/upload/chunk',
+            {
               'x-session-id': sessionId,
               'x-chunk-index': chunkIdx.toString(),
               'x-total-chunks': totalChunks.toString(),
               'x-file-name': encodeURIComponent(file.name),
               'Content-Type': 'application/octet-stream',
             },
-            body: chunkBlob,
-          })
+            chunkBlob,
+            (loadedInChunk) => {
+              const currentTotalUploaded = uploadedBytes + loadedInChunk
+              const elapsedSecs = Math.max(0.1, (Date.now() - startTime) / 1000)
+              const speedMBs = (currentTotalUploaded / (1024 * 1024) / elapsedSecs).toFixed(1)
+              const percent = Math.min(99, Math.round((currentTotalUploaded / file.size) * 100))
+              const remainingBytes = file.size - currentTotalUploaded
+              const remainingSecs = Math.round(remainingBytes / Math.max(1, currentTotalUploaded / elapsedSecs))
+              const etaFormatted = remainingSecs > 0 ? `• Còn ~${remainingSecs}s` : ''
+
+              updateQueueItem(itemId, {
+                fileUploadProgress: percent,
+                speed: `${speedMBs} MB/s ${etaFormatted}`,
+              })
+            }
+          )
 
           if (!chunkRes.ok) {
-            const errData = await chunkRes.json().catch(() => ({}))
-            throw new Error(errData.error || `Lỗi tải phân đoạn file (${chunkIdx + 1}/${totalChunks})`)
+            throw new Error(chunkRes.error || `Lỗi tải phân đoạn file (${chunkIdx + 1}/${totalChunks})`)
           }
 
-          const chunkResult = await chunkRes.json()
-          if (chunkResult.inputFileName) {
-            lastInputFileName = chunkResult.inputFileName
+          if (chunkRes.data?.inputFileName) {
+            lastInputFileName = chunkRes.data.inputFileName
           }
 
           uploadedBytes += end - start

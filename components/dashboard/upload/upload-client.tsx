@@ -130,8 +130,8 @@ export function UploadClient({ initialHistories = [] }: UploadClientProps) {
   const isCancelledRef = React.useRef<Record<string, boolean>>({})
 
   // Global Upload Settings
-  const [concurrency, setConcurrency] = React.useState<number>(4) // 1 - 10 luồng
-  const concurrencyRef = React.useRef<number>(4)
+  const [concurrency, setConcurrency] = React.useState<number>(6) // 1 - 10 luồng
+  const concurrencyRef = React.useRef<number>(6)
   concurrencyRef.current = concurrency
 
   const [globalSegmentDuration, setGlobalSegmentDuration] = React.useState<number>(5) // 3s - 15s
@@ -225,7 +225,7 @@ export function UploadClient({ initialHistories = [] }: UploadClientProps) {
         name: file.name,
         size: file.size,
         provider: 'LOTUS',
-        encodeMode: 'auto',
+        encodeMode: 'fast',
         segmentDuration: globalSegmentDurationRef.current,
         status: 'waiting',
         fileUploadProgress: 0,
